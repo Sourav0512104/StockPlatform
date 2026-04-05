@@ -1,0 +1,611 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Stock Data Intelligence Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <link rel="stylesheet" href="https://unpkg.com/intro.js/minified/introjs.min.css" />
+    <script src="https://unpkg.com/intro.js/minified/intro.min.js"></script>
+</head>
+<body class="bg-gray-100">
+    <div class="flex h-screen">
+        <!-- Sidebar -->
+        <div class="w-64 bg-white shadow-lg">
+            <div class="p-4">
+                <h2 class="text-xl font-bold mb-4">Companies</h2>
+                <div id="company-list" class="space-y-2 max-h-96 overflow-y-auto">
+                    <!-- Companies will be loaded here -->
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content -->
+        <div class="flex-1 p-6">
+            <div class="mb-4 flex justify-between items-center">
+                <h1 class="text-2xl font-bold" id="chart-title">Select a Company</h1>
+                <div class="flex space-x-2">
+                    <button id="btn-30" class="px-4 py-2 bg-blue-500 text-white rounded hover:bg-blue-600">30 Days</button>
+                    <button id="btn-90" class="px-4 py-2 bg-gray-500 text-white rounded hover:bg-gray-600">90 Days</button>
+                    <button id="btn-compare" class="px-4 py-2 bg-green-500 text-white rounded hover:bg-green-600">Compare</button>
+                    <button id="btn-gainers" class="px-4 py-2 bg-yellow-500 text-white rounded hover:bg-yellow-600">Top Gainers</button>
+                    <button id="btn-losers" class="px-4 py-2 bg-red-500 text-white rounded hover:bg-red-600">Top Losers</button>
+                    <button id="btn-volatility" class="px-4 py-2 bg-purple-500 text-white rounded hover:bg-purple-600">Volatility</button>
+                    <button id="btn-tour" class="px-4 py-2 bg-teal-600 text-white rounded hover:bg-teal-700">Tour</button>
+                    <button id="btn-api-docs" class="px-4 py-2 bg-indigo-500 text-white rounded hover:bg-indigo-600">API Docs</button>
+                    <button id="btn-back" class="px-4 py-2 bg-gray-700 text-white rounded hover:bg-gray-800 hidden">Back to All</button>
+                </div>
+            </div>
+
+            <div class="bg-white p-4 rounded shadow">
+                <canvas id="stockChart" width="400" height="200"></canvas>
+            </div>
+
+            <!-- Compare dialog (hidden) -->
+            <div id="compare-modal" class="fixed inset-0 bg-black bg-opacity-40 flex items-center justify-center hidden">
+                <div class="bg-white p-6 rounded shadow-lg w-96">
+                    <h3 class="text-lg font-semibold mb-3">Compare Stocks</h3>
+                    <div class="mb-2">
+                        <label class="block text-sm text-gray-700">Symbol 1</label>
+                        <input id="compare-sym1" list="company-datalist" class="w-full border rounded p-2" placeholder="e.g. INFY">
+                    </div>
+                    <div class="mb-4">
+                        <label class="block text-sm text-gray-700">Symbol 2</label>
+                        <input id="compare-sym2" list="company-datalist" class="w-full border rounded p-2" placeholder="e.g. TCS">
+                    </div>
+                    <datalist id="company-datalist"></datalist>
+                    <div class="flex justify-end space-x-2">
+                        <button id="compare-cancel" class="px-3 py-2 bg-gray-200 rounded">Cancel</button>
+                        <button id="compare-submit" class="px-3 py-2 bg-blue-600 text-white rounded">Compare</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Summary -->
+            <div id="summary" class="mt-4 bg-white p-4 rounded-lg shadow-md hidden">
+                <h3 class="text-lg font-semibold mb-3">Key Metrics</h3>
+                <div id="summary-content" class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <!-- Metrics will be loaded here -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Embedded API docs container (hidden by default) -->
+    <div id="api-docs-container" class="fixed inset-0 bg-white hidden z-40 overflow-auto">
+        <div class="p-4 flex justify-between items-center border-b">
+            <h2 class="text-lg font-semibold">API Documentation (Swagger UI)</h2>
+            <div class="space-x-2">
+                <button id="api-docs-close" class="px-3 py-1 bg-gray-200 rounded">Close</button>
+            </div>
+        </div>
+        <iframe id="api-docs-iframe" src="about:blank" style="width:100%;height:calc(100vh - 56px);border:0;"></iframe>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+        let currentSymbol = null;
+        let currentDays = 30;
+        let chart = null;
+        let companies = [];
+
+        // Load companies on page load
+        async function loadCompanies() {
+            try {
+                const response = await fetch(`${API_BASE}/companies`);
+                const data = await response.json();
+                companies = data.companies;
+                const list = document.getElementById('company-list');
+                list.innerHTML = companies.map(company => {
+                    const changeClass = company.change_rs >= 0 ? 'text-green-600' : 'text-red-600';
+                    const sign = company.change_rs >= 0 ? '+' : '';
+                    return `<button class="w-full text-left p-2 hover:bg-gray-100 rounded flex justify-between" onclick="selectCompany('${company.symbol}')">
+                        <span>${company.symbol}</span>
+                        <span class="${changeClass} text-sm">
+                            ${sign}${company.change_rs.toFixed(2)} (${sign}${company.change_percent.toFixed(2)}%)
+                        </span>
+                    </button>`;
+                }).join('');
+            } catch (error) {
+                console.error('Error loading companies:', error);
+            }
+        }
+
+        // Select company and load chart
+        async function selectCompany(symbol) {
+            currentSymbol = symbol;
+            document.getElementById('chart-title').textContent = `${symbol} Stock Price`;
+            await loadChart();
+            await loadSummary();
+        }
+
+        // Load chart data
+        async function loadChart() {
+            if (!currentSymbol) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/data/${currentSymbol}?days=${currentDays}`);
+                const data = await response.json();
+
+                const labels = data.data.map(d => d.date);
+                const prices = data.data.map(d => d.close);
+                const predictions = await loadPredictions();
+
+                const datasets = [{
+                    label: 'Closing Price',
+                    data: prices,
+                    borderColor: 'rgb(75, 192, 192)',
+                    tension: 0.1
+                }];
+
+                if (predictions.length > 0) {
+                    datasets.push({
+                        label: 'Predicted',
+                        data: [...Array(prices.length - predictions.length).fill(null), ...predictions],
+                        borderColor: 'rgb(255, 99, 132)',
+                        borderDash: [5, 5],
+                        tension: 0.1
+                    });
+                }
+
+                if (chart) {
+                    chart.destroy();
+                }
+
+                // Create gradient and configure chart for area style similar to image
+                const ctx = document.getElementById('stockChart').getContext('2d');
+                const gradient = ctx.createLinearGradient(0, 0, 0, 400);
+                gradient.addColorStop(0, 'rgba(59,130,246,0.35)');
+                gradient.addColorStop(1, 'rgba(59,130,246,0.05)');
+
+                // replace datasets main closing price dataset fill with gradient
+                datasets[0].fill = true;
+                datasets[0].backgroundColor = gradient;
+                datasets[0].pointRadius = 0;
+                datasets[0].borderWidth = 2.5;
+
+                // nicer grid and axes options, y on right like image
+                const config = {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: datasets
+                    },
+                    options: {
+                        responsive: true,
+                        interaction: { mode: 'index', intersect: false },
+                        plugins: {
+                            legend: { display: false },
+                            title: {
+                                display: true,
+                                text: `${currentSymbol} Stock Price (${currentDays} days)`,
+                                padding: { top: 6, bottom: 6 }
+                            },
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false,
+                                callbacks: {
+                                    title: function(items) {
+                                        if (!items || items.length === 0) return '';
+                                        const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                                        const d = new Date(items[0].label);
+                                        return `${('0'+d.getDate()).slice(-2)} ${monthNames[d.getMonth()]} '${String(d.getFullYear()).slice(-2)}`;
+                                    },
+                                    label: function(context) {
+                                        let v = context.parsed.y;
+                                        return `${context.dataset.label}: ₹ ${Number(v).toLocaleString(undefined, {maximumFractionDigits:2})}`;
+                                    }
+                                }
+                            }
+                        },
+                        scales: {
+                            x: {
+                                grid: { display: false },
+                                ticks: {
+                                    color: '#6b7280',
+                                    maxRotation: 0,
+                                    autoSkip: true,
+                                    callback: function(value, index, ticks) {
+                                        // Use the scale's label (handles category index vs value reliably)
+                                        try {
+                                            const raw = this.getLabelForValue(value);
+                                            const d = new Date(raw);
+                                            if (isNaN(d)) return String(raw);
+                                            const day = ('0' + d.getDate()).slice(-2);
+                                            const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+                                            return `${day} ${monthNames[d.getMonth()]}`;
+                                        } catch (e) {
+                                            return String(value);
+                                        }
+                                    }
+                                }
+                            },
+                            y: {
+                                position: 'right',
+                                grid: { color: 'rgba(0,0,0,0.05)' },
+                                ticks: { color: '#6b7280' }
+                            }
+                        },
+                        elements: {
+                            line: { tension: 0.35 }
+                        }
+                    },
+                    plugins: [
+                        // plugin: draw vertical crosshair and price marker on hover
+                        {
+                            id: 'crosshairAndPrice',
+                            afterDraw: (chart) => {
+                                const ctx = chart.ctx;
+                                const xAxis = chart.scales.x;
+                                const yAxis = chart.scales.y;
+                                if (!chart._active || chart._active.length === 0) {
+                                    return;
+                                }
+                                const active = chart._active[0];
+                                const x = active.element.x;
+                                // vertical dashed line
+                                ctx.save();
+                                ctx.beginPath();
+                                ctx.setLineDash([4,4]);
+                                ctx.strokeStyle = 'rgba(99,102,241,0.7)';
+                                ctx.lineWidth = 1;
+                                ctx.moveTo(x, yAxis.top);
+                                ctx.lineTo(x, yAxis.bottom);
+                                ctx.stroke();
+
+                                // price marker on right
+                                const yValue = active.element.y;
+                                const price = chart.data.datasets[active.datasetIndex].data[active.index];
+                                const markerX = chart.width - 8;
+                                ctx.fillStyle = 'rgba(99,102,241,0.95)';
+                                const text = `₹ ${price}`;
+                                ctx.font = '12px sans-serif';
+                                const textWidth = ctx.measureText(text).width + 12;
+                                const rectW = textWidth;
+                                const rectH = 20;
+                                const rectX = markerX - rectW;
+                                const rectY = yValue - rectH/2;
+                                ctx.fillRect(rectX, rectY, rectW, rectH);
+                                ctx.fillStyle = '#fff';
+                                ctx.fillText(text, rectX + 6, rectY + 14);
+                                ctx.restore();
+                            }
+                        }
+                    ]
+                };
+
+                if (chart) {
+                    chart.destroy();
+                }
+
+                chart = new Chart(ctx, config);
+            } catch (error) {
+                console.error('Error loading chart:', error);
+            }
+        }
+
+        // Load predictions
+        async function loadPredictions() {
+            try {
+                const response = await fetch(`${API_BASE}/predict/${currentSymbol}`);
+                const data = await response.json();
+                return data.predictions.map(p => p.predicted_close);
+            } catch (error) {
+                console.error('Error loading predictions:', error);
+                return [];
+            }
+        }
+
+        // Load summary
+        async function loadSummary() {
+            if (!currentSymbol) return;
+
+            try {
+                const response = await fetch(`${API_BASE}/summary/${currentSymbol}`);
+                const data = await response.json();
+                const content = document.getElementById('summary-content');
+
+                // Get latest data for daily return and MA
+                const dataResponse = await fetch(`${API_BASE}/data/${currentSymbol}?days=1`);
+                const dataResult = await dataResponse.json();
+                const latest = dataResult.data[0]; // Most recent
+
+                content.innerHTML = `
+                    <div class="bg-white bg-opacity-20 p-4 rounded">
+                        <h4 class="font-semibold">Daily Return</h4>
+                        <p class="text-2xl font-bold ${latest.daily_return >= 0 ? 'text-green-300' : 'text-red-300'}">
+                            ${(latest.daily_return * 100).toFixed(2)}%
+                        </p>
+                    </div>
+                    <div class="bg-white bg-opacity-20 p-4 rounded">
+                        <h4 class="font-semibold">7-Day MA</h4>
+                        <p class="text-2xl font-bold">${latest.ma_7 ? latest.ma_7.toFixed(2) : 'N/A'}</p>
+                    </div>
+                    <div class="bg-white bg-opacity-20 p-4 rounded">
+                        <h4 class="font-semibold">52-Week Range</h4>
+                        <p class="text-lg">High: ${data['52_week_high'] ? data['52_week_high'].toFixed(2) : 'N/A'}</p>
+                        <p class="text-lg">Low: ${data['52_week_low'] ? data['52_week_low'].toFixed(2) : 'N/A'}</p>
+                    </div>
+                `;
+                document.getElementById('summary').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading summary:', error);
+            }
+        }
+
+        // Event listeners
+        document.getElementById('btn-30').addEventListener('click', () => {
+            currentDays = 30;
+            loadChart();
+        });
+
+        document.getElementById('btn-90').addEventListener('click', () => {
+            currentDays = 90;
+            loadChart();
+        });
+
+        // Show compare modal instead of prompt
+        function showCompareModal() {
+            const modal = document.getElementById('compare-modal');
+            const datalist = document.getElementById('company-datalist');
+            // Populate datalist
+            datalist.innerHTML = companies.map(c => (typeof c === 'string' ? c : c.symbol)).map(s => `<option value="${s}"></option>`).join('');
+            // prefill first input with currentSymbol if available
+            const inp1 = document.getElementById('compare-sym1');
+            const inp2 = document.getElementById('compare-sym2');
+            inp1.value = currentSymbol || '';
+            inp2.value = '';
+            modal.classList.remove('hidden');
+            inp1.focus();
+        }
+
+        function hideCompareModal() {
+            document.getElementById('compare-modal').classList.add('hidden');
+        }
+
+        document.getElementById('btn-compare').addEventListener('click', () => showCompareModal());
+        document.getElementById('compare-cancel').addEventListener('click', () => hideCompareModal());
+        document.getElementById('compare-submit').addEventListener('click', async () => {
+            const s1 = document.getElementById('compare-sym1').value.trim().toUpperCase();
+            const s2 = document.getElementById('compare-sym2').value.trim().toUpperCase();
+            const symbolList = companies.map(c => (typeof c === 'string' ? c : c.symbol));
+            if (!s1 || !s2) { alert('Please enter both symbols'); return; }
+            if (!symbolList.includes(s1) || !symbolList.includes(s2)) { alert('One or both symbols not found'); return; }
+            hideCompareModal();
+            await compareStocks(s1, s2);
+        });
+
+        document.getElementById('btn-volatility').addEventListener('click', () => {
+            if (currentSymbol) {
+                loadVolatility();
+            }
+        });
+
+        document.getElementById('btn-gainers').addEventListener('click', () => {
+            loadTopGainers();
+        });
+
+        document.getElementById('btn-losers').addEventListener('click', () => {
+            loadTopLosers();
+        });
+
+        document.getElementById('btn-back').addEventListener('click', () => {
+            loadCompanies();
+            document.getElementById('btn-back').classList.add('hidden');
+        });
+
+        // Top gainers
+        async function loadTopGainers() {
+            try {
+                const response = await fetch(`${API_BASE}/top-gainers?days=1&limit=10`);
+                const data = await response.json();
+                const list = document.getElementById('company-list');
+                list.innerHTML = '<h3 class="font-bold mb-2">Top Gainers (1 day)</h3>' +
+                    data.top_gainers.map(gainer =>
+                        `<div class="p-2 bg-green-100 rounded mb-1">
+                            <button class="font-semibold" onclick="selectCompany('${gainer.symbol}')">${gainer.symbol}</button>
+                            <span class="text-sm text-green-600">+${(gainer.total_return * 100).toFixed(2)}%</span>
+                        </div>`
+                    ).join('');
+                document.getElementById('btn-back').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading top gainers:', error);
+            }
+        }
+
+        // Top losers
+        async function loadTopLosers() {
+            try {
+                const response = await fetch(`${API_BASE}/top-losers?days=1&limit=10`);
+                const data = await response.json();
+                const list = document.getElementById('company-list');
+                list.innerHTML = '<h3 class="font-bold mb-2">Top Losers (1 day)</h3>' +
+                    data.top_losers.map(loser =>
+                        `<div class="p-2 bg-red-100 rounded mb-1">
+                            <button class="font-semibold" onclick="selectCompany('${loser.symbol}')">${loser.symbol}</button>
+                            <span class="text-sm text-red-600">${(loser.total_return * 100).toFixed(2)}%</span>
+                        </div>`
+                    ).join('');
+                document.getElementById('btn-back').classList.remove('hidden');
+            } catch (error) {
+                console.error('Error loading top losers:', error);
+            }
+        }
+
+        // Volatility chart
+        async function loadVolatility() {
+            try {
+                const response = await fetch(`${API_BASE}/volatility/${currentSymbol}?days=${currentDays}`);
+                const data = await response.json();
+
+                const labels = data.volatility.map(d => d.date);
+                const volatilities = data.volatility.map(d => d.volatility);
+
+                if (chart) {
+                    chart.destroy();
+                }
+
+                chart = new Chart(document.getElementById('stockChart'), {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Volatility (7-day)',
+                            data: volatilities,
+                            borderColor: 'rgb(255, 99, 132)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: `${currentSymbol} Volatility (${currentDays} days)`
+                            }
+                        }
+                    }
+                });
+
+                document.getElementById('chart-title').textContent = `${currentSymbol} Volatility`;
+            } catch (error) {
+                console.error('Error loading volatility:', error);
+            }
+        }
+
+        // Compare stocks
+        async function compareStocks(symbol1, symbol2) {
+            try {
+                const response = await fetch(`${API_BASE}/compare?symbol1=${symbol1}&symbol2=${symbol2}&days=${currentDays}`);
+                const data = await response.json();
+
+                const labels = data.comparison.map(d => d.date);
+                const data1 = data.comparison.map(d => d[`${symbol1}_close`] || null);
+                const data2 = data.comparison.map(d => d[`${symbol2}_close`] || null);
+
+                if (chart) {
+                    chart.destroy();
+                }
+
+                chart = new Chart(document.getElementById('stockChart'), {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: symbol1,
+                            data: data1,
+                            borderColor: 'rgb(75, 192, 192)',
+                            tension: 0.1
+                        }, {
+                            label: symbol2,
+                            data: data2,
+                            borderColor: 'rgb(255, 99, 132)',
+                            tension: 0.1
+                        }]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            title: {
+                                display: true,
+                                text: `${symbol1} vs ${symbol2} Comparison (${currentDays} days) | Correlation: ${data.correlation ? data.correlation.toFixed(4) : 'N/A'}`
+                            }
+                        }
+                    }
+                });
+
+                document.getElementById('chart-title').textContent = `${symbol1} vs ${symbol2} Comparison`;
+                // Fetch summaries for both symbols and display side-by-side
+                try {
+                    const s1 = await (await fetch(`${API_BASE}/summary/${symbol1}`)).json();
+                    const s2 = await (await fetch(`${API_BASE}/summary/${symbol2}`)).json();
+
+                    const content = document.getElementById('summary-content');
+                    content.innerHTML = `
+                        <div class="p-3 bg-gray-50 rounded">
+                            <h4 class="font-semibold">${symbol1}</h4>
+                            <p class="text-sm">Daily Return: <strong>${(data.comparison.length? ( (data.comparison.filter(d=>d[`${symbol1}_close`]!=null).slice(-1)[0][`${symbol1}_close`] - data.comparison.filter(d=>d[`${symbol1}_close`]!=null)[0][`${symbol1}_close`]) / (data.comparison.filter(d=>d[`${symbol1}_close`]!=null)[0][`${symbol1}_close`]) *100).toFixed(2) : 'N/A')}%</strong></p>
+                            <p class="text-sm">7-day MA: <strong>${s1['average_close'] ? (s1['average_close']).toFixed(2) : 'N/A'}</strong></p>
+                            <p class="text-sm">52w High: <strong>${s1['52_week_high'] ? Number(s1['52_week_high']).toFixed(2) : 'N/A'}</strong></p>
+                            <p class="text-sm">52w Low: <strong>${s1['52_week_low'] ? Number(s1['52_week_low']).toFixed(2) : 'N/A'}</strong></p>
+                        </div>
+                        <div class="p-3 bg-gray-50 rounded">
+                            <h4 class="font-semibold">${symbol2}</h4>
+                            <p class="text-sm">Daily Return: <strong>${(data.comparison.length? ( (data.comparison.filter(d=>d[`${symbol2}_close`]!=null).slice(-1)[0][`${symbol2}_close`] - data.comparison.filter(d=>d[`${symbol2}_close`]!=null)[0][`${symbol2}_close`]) / (data.comparison.filter(d=>d[`${symbol2}_close`]!=null)[0][`${symbol2}_close`]) *100).toFixed(2) : 'N/A')}%</strong></p>
+                            <p class="text-sm">7-day MA: <strong>${s2['average_close'] ? (s2['average_close']).toFixed(2) : 'N/A'}</strong></p>
+                            <p class="text-sm">52w High: <strong>${s2['52_week_high'] ? Number(s2['52_week_high']).toFixed(2) : 'N/A'}</strong></p>
+                            <p class="text-sm">52w Low: <strong>${s2['52_week_low'] ? Number(s2['52_week_low']).toFixed(2) : 'N/A'}</strong></p>
+                        </div>
+                    `;
+                    document.getElementById('summary').classList.remove('hidden');
+                } catch (e) {
+                    console.error('Error loading compare summaries', e);
+                }
+            } catch (error) {
+                console.error('Error comparing stocks:', error);
+                alert('Error comparing stocks. Please check symbols.');
+            }
+        }
+
+        // Initialize
+        loadCompanies();
+
+        // --- Guided Tour (Intro.js) ---
+        document.getElementById('btn-tour').addEventListener('click', () => {
+            const summaryEl = document.getElementById('summary');
+            const wasHidden = summaryEl.classList.contains('hidden');
+            if (wasHidden) summaryEl.classList.remove('hidden');
+
+            const steps = [
+                { intro: 'Welcome to the Stock Data Intelligence Dashboard tour. This will walk you through the main sections.' },
+                { element: '#company-list', intro: 'Sidebar: Browse companies and click a symbol to load its chart and metrics.' },
+                { element: '#btn-30', intro: 'Time window controls: switch between 30 and 90 day views.' },
+                { element: '#btn-compare', intro: 'Compare: open the compare modal to view two symbols side-by-side and see correlation.' },
+                { element: '#btn-gainers', intro: 'Top Gainers: view the best performing stocks over the selected period.' },
+                { element: '#btn-losers', intro: 'Top Losers: view the worst performers over the selected period.' },
+                { element: '#btn-volatility', intro: 'Volatility: visualize recent price volatility for the selected symbol.' },
+                { element: '#stockChart', intro: 'Chart Area: closing prices, predictions (dashed), hover for crosshair and price marker.' },
+                { intro: 'Summary: displays Daily Return, 7-day MA, and 52-week high/low for the selected symbol.' },
+                { intro: 'That completes the tour. Explore the dashboard and use the controls to analyze symbols.' }
+            ];
+
+            const tour = introJs();
+            tour.setOptions({ steps: steps, showProgress: true, exitOnOverlayClick: false });
+            tour.oncomplete(() => { if (wasHidden) summaryEl.classList.add('hidden'); });
+            tour.onexit(() => { if (wasHidden) summaryEl.classList.add('hidden'); });
+            tour.start();
+        });
+
+        // --- API Docs integration ---
+        document.getElementById('btn-api-docs').addEventListener('click', () => {
+            // Open Swagger UI in a new tab
+            window.open(API_BASE + '/docs', '_blank');
+        });
+
+        const embedBtn = document.getElementById('btn-embed-docs');
+        const docsContainer = document.getElementById('api-docs-container');
+        const docsIframe = document.getElementById('api-docs-iframe');
+        const docsClose = document.getElementById('api-docs-close');
+
+        embedBtn.addEventListener('click', () => {
+            if (docsContainer.classList.contains('hidden')) {
+                // show and set iframe src
+                docsIframe.src = API_BASE + '/docs';
+                docsContainer.classList.remove('hidden');
+                document.body.style.overflow = 'hidden';
+            } else {
+                docsContainer.classList.add('hidden');
+                docsIframe.src = 'about:blank';
+                document.body.style.overflow = '';
+            }
+        });
+
+        docsClose.addEventListener('click', () => {
+            docsContainer.classList.add('hidden');
+            docsIframe.src = 'about:blank';
+            document.body.style.overflow = '';
+        });
+    </script>
+</body>
+</html>
