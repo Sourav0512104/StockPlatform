@@ -17,7 +17,9 @@ app.add_middleware(
 )
 
 # Load data once on startup
-DATA_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "processed_data.csv")
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+
+DATA_PATH = os.path.join(BASE_DIR, "..", "processed_data.csv")
 df = pd.read_csv(DATA_PATH)
 df['date'] = pd.to_datetime(df['date'])
 
