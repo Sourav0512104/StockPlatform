@@ -59,5 +59,5 @@ The system processes 50 CSV files containing Nifty50 stock data:
 5. Calculate technical indicators and metrics
 6. Store in SQLite for fast queries and CSV export
 
-###Deployed on Render
+### Deployed on Render
 https://findash-q699.onrender.com/
