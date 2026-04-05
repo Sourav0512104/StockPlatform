@@ -185,7 +185,9 @@ def get_volatility(symbol: str, days: int = 30):
         record['date'] = record['date'].strftime('%Y-%m-%d')
 
     return {"symbol": symbol.upper(), "volatility": result}
-
+from fastapi.staticfiles import StaticFiles
+frontend_path = os.path.join(BASE_DIR, "../frontend")
+app.mount("/", StaticFiles(directory=frontend_path, html=True), name="frontend")
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
